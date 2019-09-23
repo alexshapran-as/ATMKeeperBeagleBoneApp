@@ -18,7 +18,7 @@ object ATMKeeperService {
           remote {
             enabled-transports = ["akka.remote.netty.tcp"]
             netty.tcp {
-              hostname = "172.16.1.203"
+              hostname = "192.168.7.2"
               port = $port
             }
           }
@@ -34,7 +34,7 @@ object ATMKeeperService {
     override def receive: Receive = {
 
       case StartService() =>
-        val BankSystem = "akka.tcp://BankSystem@172.16.1.203:24321"
+        val BankSystem = "akka.tcp://BankSystem@192.168.0.161:24321"
         val BankPath = "/user/bank"
         val url = BankSystem + BankPath
         val bnakSelection: ActorSelection = context.actorSelection(url)

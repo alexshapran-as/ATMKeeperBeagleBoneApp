@@ -1,5 +1,6 @@
-# Project exclude paths
-/project/project/target/
-/project/target/
-/target/
-/target/scala-2.12/classes/
+/home/alex/IdeaProjects/ATMKeeperBeagleBoneApp/.idea
+/home/alex/IdeaProjects/ATMKeeperBeagleBoneApp/project/project
+/home/alex/IdeaProjects/ATMKeeperBeagleBoneApp/project/target
+/home/alex/IdeaProjects/ATMKeeperBeagleBoneApp/target/streams
+/home/alex/IdeaProjects/ATMKeeperBeagleBoneApp/target/.history
+/home/alex/IdeaProjects/ATMKeeperBeagleBoneApp/target/scala-2.12/classes
