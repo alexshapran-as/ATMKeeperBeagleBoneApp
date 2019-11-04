@@ -19,9 +19,9 @@ object Authenticator {
   def checkSignatures(commandSignature: String, command: String): Either[String, String] = {
 
     if (commandSignature == generateHMAC(command)) {
-     Right("Электронная подпись команды верна")
+     Right(s"BEAGLEBONE: * Received command: $command * Command validation: Success - Electronic signature is correct")
     } else {
-      Left("Отказано в доступе. Электронная подпись команды неверна")
+      Left("BEAGLEBONE: * Access denied * Command validation: Failure - Invalid electronic signature")
     }
 
   }

@@ -18,12 +18,12 @@ object ATMKeeperService {
           remote {
             enabled-transports = ["akka.remote.netty.tcp"]
             netty.tcp {
-              hostname = "192.168.7.2"
+              hostname = "localhost"
               port = $port
             }
           }
         }
-    """)
+    """) // "192.168.7.2"
 
   def remotingSystem(name: String, port: Int): ActorSystem = ActorSystem(name, remotingConfig(port))
 
@@ -32,13 +32,12 @@ object ATMKeeperService {
     var remoteActorBank: ActorRef = _
 
     override def receive: Receive = {
-
       case StartService() =>
-        val BankSystem = "akka.tcp://BankSystem@192.168.0.161:24321"
+        val BankSystem = "akka.tcp://BankSystem@localhost:24321" // 192.168.0.161
         val BankPath = "/user/bank"
         val url = BankSystem + BankPath
-        val bnakSelection: ActorSelection = context.actorSelection(url)
-        bnakSelection ! Identify(0)
+        val bankSelection: ActorSelection = context.actorSelection(url)
+        bankSelection ! Identify(0)
 
       case ActorIdentity(0, Some(ref)) => self ! ref
 
@@ -54,6 +53,17 @@ object ATMKeeperService {
       case msg: String =>
         println("got message from bank: " + msg)
 
+      case Command(cmd, signature) if cmd == "Block BBB" =>
+        val realBankSender: ActorRef = sender
+        println(s"Recieved COMMAND: ${cmd}")
+        checkSignatures(signature, cmd) match {
+          case Right(_) =>
+            realBankSender ! Right("BEAGLEBONE: * Blocked")
+            self ! PoisonPill
+          case Left(errMsg) =>
+            realBankSender ! Left(errMsg)
+        }
+
       case Command(cmd, signature) =>
         val realBankSender: ActorRef = sender
         println(s"Recieved COMMAND: ${cmd}")
@@ -63,19 +73,13 @@ object ATMKeeperService {
           case Left(errMsg) =>
             realBankSender ! Left(errMsg)
         }
-
-      case "close" => self ! PoisonPill
-
     }
-
   }
 
   case class BeagleBone() {
-
     val system: ActorSystem = remotingSystem("BeagleBoneSystem", 24567)
     val localActorBBB: ActorRef = system.actorOf(Props[BeagleBoneService], "beaglebone")
     def startBBBService(): Unit = localActorBBB ! StartService()
-
   }
 
 }
