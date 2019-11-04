@@ -1,14 +1,21 @@
 package services
 
 import akka.actor.{Actor, ActorIdentity, ActorRef, ActorSelection, ActorSystem, Identify, PoisonPill, Props}
+import akka.util.Timeout
+import akka.pattern._
 import com.typesafe.config._
 import authenticator.Authenticator._
+import scala.concurrent.duration._
+import scala.concurrent.Future
+import scala.concurrent.ExecutionContext.Implicits.global
 
 object ATMKeeperService {
 
   private case class Command(cmd: String, signature: String)
   private case class StartService()
   private case class Init(remote: ActorRef)
+  private case class InitBankSystem(remote: ActorRef)
+  private case class InitDispenserSystem(remote: ActorRef)
 
   def remotingConfig(port: Int): Config = ConfigFactory.parseString(
     s"""
@@ -30,35 +37,50 @@ object ATMKeeperService {
   class BeagleBoneService extends Actor {
 
     var remoteActorBank: ActorRef = _
+    var remoteActorDispenser: ActorRef = _
 
     override def receive: Receive = {
       case StartService() =>
-        val BankSystem = "akka.tcp://BankSystem@localhost:24321" // 192.168.0.161
-        val BankPath = "/user/bank"
-        val url = BankSystem + BankPath
-        val bankSelection: ActorSelection = context.actorSelection(url)
-        bankSelection ! Identify(0)
+        // Identify Bank System
+        val bankSystem = "akka.tcp://BankSystem@localhost:24321" // 192.168.0.161
+        val bankPath = "/user/bank"
+        val bankUrl = bankSystem + bankPath
+        val bankSelection: ActorSelection = context.actorSelection(bankUrl)
+        bankSelection ! Identify("bank")
+        // Identify Dispenser System
+        val dispenserSystem = "akka.tcp://DispenserSystem@localhost:24325"
+        val dispenserPath = "/user/dispenser"
+        val dispenserUrl = dispenserSystem + dispenserPath
+        val dispenserSelection = context.actorSelection(dispenserUrl)
+        dispenserSelection ! Identify("dispenser")
 
-      case ActorIdentity(0, Some(ref)) => self ! ref
+      case ActorIdentity("bank", Some(ref)) => self ! InitBankSystem(ref)
 
-      case ActorIdentity(0, None) =>
-        println("Something’s wrong - ain’t no pongy anywhere!")
+      case ActorIdentity("dispenser", Some(ref)) => self ! InitDispenserSystem(ref)
+
+      case ActorIdentity(correlationId, None) =>
+        println(s"Something’s wrong: Perhaps the $correlationId system is not working!")
         context.stop(self)
 
-      case remote: ActorRef =>
-        remote ! s"Connection established with ${self.path}"
-        remote ! Init(self)
-        remoteActorBank = remote
+      case InitBankSystem(bankRemote: ActorRef) =>
+        bankRemote ! s"Connection established with ${self.path}"
+        bankRemote ! Init(self)
+        remoteActorBank = bankRemote
+
+      case InitDispenserSystem(dispenserRemote: ActorRef) =>
+        dispenserRemote ! s"Connection established with ${self.path}"
+        dispenserRemote ! Init(self)
+        remoteActorDispenser = dispenserRemote
 
       case msg: String =>
         println("got message from bank: " + msg)
 
       case Command(cmd, signature) if cmd == "Block BBB" =>
         val realBankSender: ActorRef = sender
-        println(s"Recieved COMMAND: ${cmd}")
+        println(s"BeagleBone Recieved COMMAND: ${cmd}")
         checkSignatures(signature, cmd) match {
           case Right(_) =>
-            realBankSender ! Right("BEAGLEBONE: * Blocked")
+            realBankSender ! Right(("BEAGLEBONE: * Blocked", ""))
             self ! PoisonPill
           case Left(errMsg) =>
             realBankSender ! Left(errMsg)
@@ -66,10 +88,17 @@ object ATMKeeperService {
 
       case Command(cmd, signature) =>
         val realBankSender: ActorRef = sender
-        println(s"Recieved COMMAND: ${cmd}")
+        println(s"BeagleBone Recieved COMMAND: ${cmd}")
         checkSignatures(signature, cmd) match {
-          case Right(msg) =>
-            realBankSender ! Right(msg)
+          case Right(beagleBoneMsg) =>
+            implicit val timeout: Timeout = Timeout(10.seconds)
+            val response: Future[Either[String, String]] = (remoteActorDispenser ? Command(cmd, signature)).mapTo[Either[String, String]]
+            response map {
+              case Right(dispenserMsg) =>
+                realBankSender ! Right((beagleBoneMsg, dispenserMsg))
+              case Left(errMsg) =>
+                realBankSender ! Left(errMsg)
+            }
           case Left(errMsg) =>
             realBankSender ! Left(errMsg)
         }
