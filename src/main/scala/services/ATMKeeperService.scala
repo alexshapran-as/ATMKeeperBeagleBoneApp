@@ -4,16 +4,18 @@ import akka.actor.{Actor, ActorIdentity, ActorRef, ActorSelection, ActorSystem, 
 import akka.util.Timeout
 import akka.pattern._
 import com.typesafe.config._
-import authenticator.Authenticator._
 import scala.concurrent.duration._
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
+import java.security._
+import cryptographer.RSA
 
 object ATMKeeperService {
 
-  private case class Command(cmd: String, signature: String)
+  private case class Command(cmd: String)
   private case class StartService()
   private case class Init(remote: ActorRef)
+  private case class InitSecure(remote: ActorRef, publicKey: PublicKey)
   private case class InitBankSystem(remote: ActorRef)
   private case class InitDispenserSystem(remote: ActorRef)
 
@@ -25,7 +27,7 @@ object ATMKeeperService {
           remote {
             enabled-transports = ["akka.remote.netty.tcp"]
             netty.tcp {
-              hostname = "192.168.7.2"
+              hostname = "localhost"
               port = $port
             }
           }
@@ -42,13 +44,13 @@ object ATMKeeperService {
     override def receive: Receive = {
       case StartService() =>
         // Identify Bank System
-        val bankSystem = "akka.tcp://BankSystem@10.50.1.61:24321" // 192.168.0.161
+        val bankSystem = "akka.tcp://BankSystem@localhost:24321" // 10.50.1.61 BMSTU
         val bankPath = "/user/bank"
         val bankUrl = bankSystem + bankPath
         val bankSelection: ActorSelection = context.actorSelection(bankUrl)
         bankSelection ! Identify("bank")
         // Identify Dispenser System
-        val dispenserSystem = "akka.tcp://DispenserSystem@10.50.1.61:24325"
+        val dispenserSystem = "akka.tcp://DispenserSystem@localhost:24325" // 10.50.1.61 BMSTU
         val dispenserPath = "/user/dispenser"
         val dispenserUrl = dispenserSystem + dispenserPath
         val dispenserSelection = context.actorSelection(dispenserUrl)
@@ -64,7 +66,7 @@ object ATMKeeperService {
 
       case InitBankSystem(bankRemote: ActorRef) =>
         bankRemote ! s"Connection established with ${self.path}"
-        bankRemote ! Init(self)
+        bankRemote ! InitSecure(self, RSA.getSelfPublicKey)
         remoteActorBank = bankRemote
 
       case InitDispenserSystem(dispenserRemote: ActorRef) =>
@@ -75,32 +77,28 @@ object ATMKeeperService {
       case msg: String =>
         println("got message from bank: " + msg)
 
-      case Command(cmd, signature) if cmd == "Block BBB" =>
+      case command: Array[Byte] =>
         val realBankSender: ActorRef = sender
-        println(s"BeagleBone Recieved COMMAND: ${cmd}")
-        checkSignatures(signature, cmd) match {
-          case Right(_) =>
+        RSA.decrypt(command) match {
+          case cmd: String if cmd == "Command(Block BBB)" =>
+            println(s"BeagleBone Recieved COMMAND: ${cmd}")
             realBankSender ! Right(("BEAGLEBONE: * Blocked", ""))
             self ! PoisonPill
-          case Left(errMsg) =>
-            realBankSender ! Left(errMsg)
-        }
 
-      case Command(cmd, signature) =>
-        val realBankSender: ActorRef = sender
-        println(s"BeagleBone Recieved COMMAND: ${cmd}")
-        checkSignatures(signature, cmd) match {
-          case Right(beagleBoneMsg) =>
+          case cmd: String if cmd == "Command(Test)" =>
+            println(s"BeagleBone Recieved COMMAND: ${cmd}")
             implicit val timeout: Timeout = Timeout(10.seconds)
-            val response: Future[Either[String, String]] = (remoteActorDispenser ? Command(cmd, signature)).mapTo[Either[String, String]]
+            val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
             response map {
               case Right(dispenserMsg) =>
-                realBankSender ! Right((beagleBoneMsg, dispenserMsg))
+                realBankSender ! Right((cmd, dispenserMsg))
               case Left(errMsg) =>
                 realBankSender ! Left(errMsg)
             }
-          case Left(errMsg) =>
-            realBankSender ! Left(errMsg)
+
+          case invalid =>
+            println(s"BeagleBone Recieved Invalid COMMAND: ${invalid}")
+            Left("Invalid command")
         }
     }
   }
