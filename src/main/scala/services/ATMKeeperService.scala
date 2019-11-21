@@ -91,7 +91,7 @@ object ATMKeeperService {
             val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
             response map {
               case Right(dispenserMsg) =>
-                realBankSender ! Right((cmd, dispenserMsg))
+                realBankSender ! Right((s"BEAGLEBONE: * Received command: $cmd", dispenserMsg))
               case Left(errMsg) =>
                 realBankSender ! Left(errMsg)
             }
