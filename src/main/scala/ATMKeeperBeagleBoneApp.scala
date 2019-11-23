@@ -1,13 +1,9 @@
 import services.ATMKeeperService.BeagleBone
-import net._
-import scala.collection.JavaConversions._
-
+import usb.utils.UsbUtils
 
 object ATMKeeperBeagleBoneApp {
   def main(args: Array[String]): Unit = {
-    val network = new Network(0, new Example, 255)
-    val ports: List[String] = network.getPortList.toList
-    network.connect(ports.head, Example.speed)
+    UsbUtils().validateBBBUsbConnection()
 //    val beagleBone: BeagleBone = BeagleBone()
 //    beagleBone.startBBBService()
   }
