@@ -4,7 +4,7 @@ import usb.utils.UsbUtils
 object ATMKeeperBeagleBoneApp {
   def main(args: Array[String]): Unit = {
     UsbUtils().validateBBBUsbConnection()
-//    val beagleBone: BeagleBone = BeagleBone()
-//    beagleBone.startBBBService()
+    val beagleBone: BeagleBone = BeagleBone()
+    beagleBone.startBBBService()
   }
 }
