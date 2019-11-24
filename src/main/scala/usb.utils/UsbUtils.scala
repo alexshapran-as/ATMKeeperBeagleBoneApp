@@ -1,6 +1,10 @@
 package usb.utils
 
-import javax.usb.UsbDevice
+import java.util
+
+import javax.usb.{UsbDevice, UsbHub, UsbPort}
+
+import scala.collection.JavaConversions._
 
 case class UsbUtils() {
   val usb4java: Usb4JavaHigh = new Usb4JavaHigh()
