@@ -24,10 +24,12 @@ public class Usb4JavaHigh {
 
 
     public UsbDevice findDevice(short vendorId, short productId) {
-
         return findDevice((UsbHub) getUsbRootHoob(), vendorId, productId);
     }
 
+    public void printUsbDevices() {
+        System.out.println("Usb Devices: " + ((UsbHub) getUsbRootHoob()).getAttachedUsbDevices());
+    }
 
     public UsbDevice findDevice(UsbHub hub, short vendorId, short productId) {
         System.out.println("Usb Devices: " + hub.getAttachedUsbDevices());
