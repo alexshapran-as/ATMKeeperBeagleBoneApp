@@ -12,6 +12,7 @@ public class Usb4JavaHigh {
 
         try {
             final UsbServices services = UsbHostManager.getUsbServices();
+            System.out.println("USB Services: " + services.toString());
             return services.getRootUsbHub();
         } catch (SecurityException e) {
             e.printStackTrace();
@@ -32,7 +33,6 @@ public class Usb4JavaHigh {
     }
 
     public UsbDevice findDevice(UsbHub hub, short vendorId, short productId) {
-        System.out.println("Usb Devices: " + hub.getAttachedUsbDevices());
         for (UsbDevice device : (List<UsbDevice>) hub.getAttachedUsbDevices()) {
             UsbDeviceDescriptor desc = device.getUsbDeviceDescriptor();
             if (desc.idVendor() == vendorId && desc.idProduct() == productId)
