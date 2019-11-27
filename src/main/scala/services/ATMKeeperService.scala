@@ -14,8 +14,10 @@ object ATMKeeperService {
 
   private case class Command(cmd: String)
   private case class StartService()
-  private case class Init(remote: ActorRef)
-  private case class InitSecure(remote: ActorRef, publicKey: PublicKey)
+  private case class InitBBBForDispenser(remote: ActorRef)
+  private case class InitBBBForBank(remote: ActorRef)
+  private case class InitBBBPubKey(realSender: ActorRef, publicKey: PublicKey)
+  private case class InitBankPubKey(realSender: ActorRef, publicKey: PublicKey)
   private case class InitBankSystem(remote: ActorRef)
   private case class InitDispenserSystem(remote: ActorRef)
 
@@ -38,8 +40,9 @@ object ATMKeeperService {
 
   class BeagleBoneService extends Actor {
 
-    var remoteActorBank: ActorRef = _
-    var remoteActorDispenser: ActorRef = _
+    var remoteActorBank: ActorRef = null
+    var remoteActorDispenser: ActorRef = null
+    var remoteBankPublicKey: PublicKey = null
 
     override def receive: Receive = {
       case StartService() =>
@@ -50,11 +53,11 @@ object ATMKeeperService {
         val bankSelection: ActorSelection = context.actorSelection(bankUrl)
         bankSelection ! Identify("bank")
         // Identify Dispenser System
-        val dispenserSystem = "akka.tcp://DispenserSystem@localhost:24325" // 10.50.1.61 BMSTU
-        val dispenserPath = "/user/dispenser"
-        val dispenserUrl = dispenserSystem + dispenserPath
-        val dispenserSelection = context.actorSelection(dispenserUrl)
-        dispenserSelection ! Identify("dispenser")
+//        val dispenserSystem = "akka.tcp://DispenserSystem@localhost:24325" // 10.50.1.61 BMSTU
+//        val dispenserPath = "/user/dispenser"
+//        val dispenserUrl = dispenserSystem + dispenserPath
+//        val dispenserSelection = context.actorSelection(dispenserUrl)
+//        dispenserSelection ! Identify("dispenser")
 
       case ActorIdentity("bank", Some(ref)) => self ! InitBankSystem(ref)
 
@@ -65,40 +68,53 @@ object ATMKeeperService {
         context.stop(self)
 
       case InitBankSystem(bankRemote: ActorRef) =>
-        bankRemote ! s"Connection established with ${self.path}"
-        bankRemote ! InitSecure(self, RSA.getSelfPublicKey)
         remoteActorBank = bankRemote
+        remoteActorBank ! s"Connection established with ${self.path}"
+        remoteActorBank ! InitBBBForBank(self)
 
       case InitDispenserSystem(dispenserRemote: ActorRef) =>
         dispenserRemote ! s"Connection established with ${self.path}"
-        dispenserRemote ! Init(self)
+        dispenserRemote ! InitBBBForDispenser(self)
         remoteActorDispenser = dispenserRemote
 
+      case InitBBBPubKey(realSender: ActorRef, selfPublicKey: PublicKey) =>
+        remoteActorBank ! InitBBBPubKey(realSender, selfPublicKey)
+
+      case InitBankPubKey(realSender: ActorRef, remotePublicKey: PublicKey) =>
+        remoteBankPublicKey = remotePublicKey
+        realSender ! Right((s"BANK - BEAGLEBONE: * Ключи загружены", ""))
+
       case msg: String =>
-        println("got message from bank: " + msg)
+        println(msg)
 
       case command: Array[Byte] =>
         val realBankSender: ActorRef = sender
-        RSA.decrypt(command) match {
-          case cmd: String if cmd == "Command(Block BBB)" =>
-            println(s"BeagleBone Recieved COMMAND: ${cmd}")
-            realBankSender ! Right(("BEAGLEBONE: * Blocked", ""))
-            self ! PoisonPill
+        val uploadKeysCommand = new String(command)
+        if (uploadKeysCommand == "Command(Загрузить ключи)") {
+          println(s"BeagleBone recieved COMMAND: ${uploadKeysCommand}")
+          self ! InitBBBPubKey(realBankSender, RSA.getSelfPublicKey)
+        } else {
+          RSA.decrypt(command) match {
+            case cmd: String if cmd == "Command(Block BBB)" =>
+              println(s"BeagleBone recieved COMMAND: ${cmd}")
+              realBankSender ! Right(("BEAGLEBONE: Заблокировано", ""))
+              self ! PoisonPill
 
-          case cmd: String if cmd == "Command(Test)" =>
-            println(s"BeagleBone Recieved COMMAND: ${cmd}")
-            implicit val timeout: Timeout = Timeout(10.seconds)
-            val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
-            response map {
-              case Right(dispenserMsg) =>
-                realBankSender ! Right((s"BEAGLEBONE: * Received command: $cmd", dispenserMsg))
-              case Left(errMsg) =>
-                realBankSender ! Left(errMsg)
-            }
+            case cmd: String if cmd == "Command(Test)" =>
+              println(s"BeagleBone Recieved COMMAND: ${cmd}")
+              implicit val timeout: Timeout = Timeout(10.seconds)
+              val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
+              response map {
+                case Right(dispenserMsg) =>
+                  realBankSender ! Right((s"BEAGLEBONE: получена команда: $cmd", dispenserMsg))
+                case Left(errMsg) =>
+                  realBankSender ! Left(errMsg)
+              }
 
-          case invalid =>
-            println(s"BeagleBone Recieved Invalid COMMAND: ${invalid}")
-            Left("Invalid command")
+            case invalid =>
+              println(s"BeagleBone recieved Invalid COMMAND: ${invalid}")
+              Left("Недоступная команда")
+          }
         }
     }
   }
