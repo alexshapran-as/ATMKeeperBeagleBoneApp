@@ -53,11 +53,11 @@ object ATMKeeperService {
         val bankSelection: ActorSelection = context.actorSelection(bankUrl)
         bankSelection ! Identify("bank")
         // Identify Dispenser System
-//        val dispenserSystem = "akka.tcp://DispenserSystem@localhost:24325" // 10.50.1.61 BMSTU
-//        val dispenserPath = "/user/dispenser"
-//        val dispenserUrl = dispenserSystem + dispenserPath
-//        val dispenserSelection = context.actorSelection(dispenserUrl)
-//        dispenserSelection ! Identify("dispenser")
+        val dispenserSystem = "akka.tcp://DispenserSystem@localhost:24325" // 10.50.1.61 BMSTU
+        val dispenserPath = "/user/dispenser"
+        val dispenserUrl = dispenserSystem + dispenserPath
+        val dispenserSelection = context.actorSelection(dispenserUrl)
+        dispenserSelection ! Identify("dispenser")
 
       case ActorIdentity("bank", Some(ref)) => self ! InitBankSystem(ref)
 
@@ -82,7 +82,7 @@ object ATMKeeperService {
 
       case InitBankPubKey(realSender: ActorRef, remotePublicKey: PublicKey) =>
         remoteBankPublicKey = remotePublicKey
-        realSender ! Right((s"BANK - BEAGLEBONE: * Ключи загружены", ""))
+        realSender ! Right((RSA.encrypt("БАНКОМАТ - BEAGLE BONE: Ключи загружены", remoteBankPublicKey), None))
 
       case msg: String =>
         println(msg)
@@ -90,30 +90,50 @@ object ATMKeeperService {
       case command: Array[Byte] =>
         val realBankSender: ActorRef = sender
         val uploadKeysCommand = new String(command)
-        if (uploadKeysCommand == "Command(Загрузить ключи)") {
+        if (uploadKeysCommand == "Command(Загрузить ключи)" || uploadKeysCommand == "Command(Обновить ключи)") {
           println(s"BeagleBone recieved COMMAND: ${uploadKeysCommand}")
           self ! InitBBBPubKey(realBankSender, RSA.getSelfPublicKey)
         } else {
           RSA.decrypt(command) match {
-            case cmd: String if cmd == "Command(Block BBB)" =>
-              println(s"BeagleBone recieved COMMAND: ${cmd}")
-              realBankSender ! Right(("BEAGLEBONE: Заблокировано", ""))
-              self ! PoisonPill
+            case cmd: String if cmd == "Command(Сбросить ключи)" =>
+              remoteBankPublicKey = null
+              RSA.resetKeys
+              realBankSender ! Right("БАНКОМАТ - BEAGLE BONE: Ключи сброшены".getBytes(), None)
 
-            case cmd: String if cmd == "Command(Test)" =>
+            case cmd: String if cmd == "Command(Сообщить состояние устройств)" =>
+              println(s"BeagleBone Recieved COMMAND: ${cmd}")
+              implicit val timeout: Timeout = Timeout(1000.seconds)
+              val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
+              response map {
+                case Right(dispenserMsg) =>
+                  realBankSender ! Right((RSA.encrypt("BEAGLE BONE: состояние стабильно", remoteBankPublicKey),
+                    Some(RSA.encrypt(dispenserMsg, remoteBankPublicKey))))
+                case Left(errMsg) =>
+                  realBankSender ! Left(RSA.encrypt(errMsg, remoteBankPublicKey))
+              }
+
+            case cmd: String if cmd == "Command(Сообщить состояние диспенсера)" ||
+                                cmd == "Command(Заблокировать диспенсер)" ||
+                                cmd == "Command(Снять блокировку диспенсера)" ||
+                                cmd == "Command(Инкассация банкомата)" ||
+                                cmd == "Command(Тест контроллера ББ)" ||
+                                cmd == "Command(Тест датчиков КББ)" ||
+                                cmd == "Command(Тест Д)" ||
+                                cmd == "Command(Отключить КББ)" =>
               println(s"BeagleBone Recieved COMMAND: ${cmd}")
               implicit val timeout: Timeout = Timeout(10.seconds)
               val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
               response map {
                 case Right(dispenserMsg) =>
-                  realBankSender ! Right((s"BEAGLEBONE: получена команда: $cmd", dispenserMsg))
+                  realBankSender ! Right((RSA.encrypt(s"BEAGLE BONE: получена команда: $cmd", remoteBankPublicKey),
+                    Some(RSA.encrypt(dispenserMsg, remoteBankPublicKey))))
                 case Left(errMsg) =>
-                  realBankSender ! Left(errMsg)
+                  realBankSender ! Left(RSA.encrypt(errMsg, remoteBankPublicKey))
               }
 
             case invalid =>
               println(s"BeagleBone recieved Invalid COMMAND: ${invalid}")
-              Left("Недоступная команда")
+              Left(RSA.encrypt("Недоступная команда", remoteBankPublicKey))
           }
         }
     }
