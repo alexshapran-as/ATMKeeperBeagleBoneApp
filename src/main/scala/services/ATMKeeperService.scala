@@ -47,13 +47,13 @@ object ATMKeeperService {
     override def receive: Receive = {
       case StartService() =>
         // Identify Bank System
-        val bankSystem = "akka.tcp://BankSystem@192.168.43.42:24321" // 10.50.1.61 BMSTU
+        val bankSystem = "akka.tcp://BankSystem@192.168.43.208:24321" // 10.50.1.61 BMSTU
         val bankPath = "/user/bank"
         val bankUrl = bankSystem + bankPath
         val bankSelection: ActorSelection = context.actorSelection(bankUrl)
         bankSelection ! Identify("bank")
         // Identify Dispenser System
-        val dispenserSystem = "akka.tcp://DispenserSystem@192.168.43.42:24325" // 10.50.1.61 BMSTU
+        val dispenserSystem = "akka.tcp://DispenserSystem@192.168.43.208:24325" // 10.50.1.61 BMSTU
         val dispenserPath = "/user/dispenser"
         val dispenserUrl = dispenserSystem + dispenserPath
         val dispenserSelection = context.actorSelection(dispenserUrl)
