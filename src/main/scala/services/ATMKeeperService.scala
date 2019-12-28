@@ -9,6 +9,7 @@ import scala.concurrent.Future
 import scala.concurrent.ExecutionContext.Implicits.global
 import java.security._
 import cryptographer.RSA
+import authenticator.Authenticator._
 
 object ATMKeeperService {
 
@@ -47,13 +48,13 @@ object ATMKeeperService {
     override def receive: Receive = {
       case StartService() =>
         // Identify Bank System
-        val bankSystem = "akka.tcp://BankSystem@192.168.43.208:24321" // 10.50.1.61 BMSTU
+        val bankSystem = "akka.tcp://BankSystem@ 192.168.43.208:24321" // 192.168.43.208 BMSTU
         val bankPath = "/user/bank"
         val bankUrl = bankSystem + bankPath
         val bankSelection: ActorSelection = context.actorSelection(bankUrl)
         bankSelection ! Identify("bank")
         // Identify Dispenser System
-        val dispenserSystem = "akka.tcp://DispenserSystem@192.168.43.91:24325" // 10.50.1.61 BMSTU
+        val dispenserSystem = "akka.tcp://DispenserSystem@192.168.43.91:24325" // 192.168.43.91 BMSTU
         val dispenserPath = "/user/dispenser"
         val dispenserUrl = dispenserSystem + dispenserPath
         val dispenserSelection = context.actorSelection(dispenserUrl)
@@ -87,53 +88,60 @@ object ATMKeeperService {
       case msg: String =>
         println(msg)
 
-      case command: Array[Byte] =>
+      case (command: Array[Byte], signature: String) =>
         val realBankSender: ActorRef = sender
         val uploadKeysCommand = new String(command)
         if (uploadKeysCommand == "Command(Загрузить ключи)" || uploadKeysCommand == "Command(Обновить ключи)") {
           println(s"BeagleBone recieved COMMAND: ${uploadKeysCommand}")
           self ! InitBBBPubKey(realBankSender, RSA.getSelfPublicKey)
         } else {
-          RSA.decrypt(command) match {
-            case cmd: String if cmd == "Command(Сбросить ключи)" =>
-              remoteBankPublicKey = null
-              RSA.resetKeys
-              realBankSender ! Right("БАНКОМАТ - BEAGLE BONE: Ключи сброшены".getBytes(), None)
+          checkSignatures(signature, RSA.decrypt(command)) match {
+            case Right(msg) =>
+              println(msg)
+              RSA.decrypt(command) match {
+                case cmd: String if cmd == "Command(Сбросить ключи)" =>
+                  remoteBankPublicKey = null
+                  RSA.resetKeys
+                  realBankSender ! Right("БАНКОМАТ - BEAGLE BONE: Ключи сброшены".getBytes(), None)
 
-            case cmd: String if cmd == "Command(Сообщить состояние устройств)" =>
-              println(s"BeagleBone Recieved COMMAND: ${cmd}")
-              implicit val timeout: Timeout = Timeout(1000.seconds)
-              val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
-              response map {
-                case Right(dispenserMsg) =>
-                  realBankSender ! Right((RSA.encrypt("BEAGLE BONE: состояние стабильно", remoteBankPublicKey),
-                    Some(RSA.encrypt(dispenserMsg, remoteBankPublicKey))))
-                case Left(errMsg) =>
-                  realBankSender ! Left(RSA.encrypt(errMsg, remoteBankPublicKey))
+                case cmd: String if cmd == "Command(Сообщить состояние устройств)" =>
+                  println(s"BeagleBone Recieved COMMAND: ${cmd}")
+                  implicit val timeout: Timeout = Timeout(1000.seconds)
+                  val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
+                  response map {
+                    case Right(dispenserMsg) =>
+                      realBankSender ! Right((RSA.encrypt("BEAGLE BONE: состояние стабильно", remoteBankPublicKey),
+                        Some(RSA.encrypt(dispenserMsg, remoteBankPublicKey))))
+                    case Left(errMsg) =>
+                      realBankSender ! Left(RSA.encrypt(errMsg, remoteBankPublicKey))
+                  }
+
+                case cmd: String if cmd == "Command(Сообщить состояние диспенсера)" ||
+                  cmd == "Command(Заблокировать диспенсер)" ||
+                  cmd == "Command(Снять блокировку диспенсера)" ||
+                  cmd == "Command(Инкассация банкомата)" ||
+                  cmd == "Command(Тест контроллера ББ)" ||
+                  cmd == "Command(Тест датчиков КББ)" ||
+                  cmd == "Command(Тест Д)" ||
+                  cmd == "Command(Отключить КББ)" =>
+                  println(s"BeagleBone Recieved COMMAND: ${cmd}")
+                  implicit val timeout: Timeout = Timeout(10.seconds)
+                  val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
+                  response map {
+                    case Right(dispenserMsg) =>
+                      realBankSender ! Right((RSA.encrypt(s"BEAGLE BONE: получена команда: $cmd", remoteBankPublicKey),
+                        Some(RSA.encrypt(dispenserMsg, remoteBankPublicKey))))
+                    case Left(errMsg) =>
+                      realBankSender ! Left(RSA.encrypt(errMsg, remoteBankPublicKey))
+                  }
+
+                case invalid =>
+                  println(s"BeagleBone recieved Invalid COMMAND: ${invalid}")
+                  Left(RSA.encrypt("Недоступная команда", remoteBankPublicKey))
               }
 
-            case cmd: String if cmd == "Command(Сообщить состояние диспенсера)" ||
-                                cmd == "Command(Заблокировать диспенсер)" ||
-                                cmd == "Command(Снять блокировку диспенсера)" ||
-                                cmd == "Command(Инкассация банкомата)" ||
-                                cmd == "Command(Тест контроллера ББ)" ||
-                                cmd == "Command(Тест датчиков КББ)" ||
-                                cmd == "Command(Тест Д)" ||
-                                cmd == "Command(Отключить КББ)" =>
-              println(s"BeagleBone Recieved COMMAND: ${cmd}")
-              implicit val timeout: Timeout = Timeout(10.seconds)
-              val response: Future[Either[String, String]] = (remoteActorDispenser ? cmd).mapTo[Either[String, String]]
-              response map {
-                case Right(dispenserMsg) =>
-                  realBankSender ! Right((RSA.encrypt(s"BEAGLE BONE: получена команда: $cmd", remoteBankPublicKey),
-                    Some(RSA.encrypt(dispenserMsg, remoteBankPublicKey))))
-                case Left(errMsg) =>
-                  realBankSender ! Left(RSA.encrypt(errMsg, remoteBankPublicKey))
-              }
-
-            case invalid =>
-              println(s"BeagleBone recieved Invalid COMMAND: ${invalid}")
-              Left(RSA.encrypt("Недоступная команда", remoteBankPublicKey))
+            case Left(errMsg) =>
+              realBankSender ! Left(RSA.encrypt(errMsg, remoteBankPublicKey))
           }
         }
     }
